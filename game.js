@@ -705,32 +705,71 @@ const ROOM_PREFIX = "qj-game-"; // 房间名前缀，避免冲突
 
 // 初始化网络
 function initNetwork() {
-    // 创建 Peer 对象 (使用默认的免费公共服务器)
-    // 如果默认服务器不稳定，可以指定 host: '0.peerjs.com', port: 443, secure: true
-    peer = new Peer(null, {
-        debug: 2
-    });
+    // 【修复核心】显式指定 PeerJS 服务器配置
+    const peerConfig = {
+        host: '0.peerjs.com',
+        port: 443,
+        secure: true, // 必须为 true，因为 GitHub Pages 是 HTTPS
+        debug: 2,
+        config: {
+            'iceServers': [
+                { url: 'stun:stun.l.google.com:19302' },
+                { url: 'stun:stun1.l.google.com:19302' }
+            ]
+        }
+    };
+
+    console.log("正在连接 PeerJS 服务器...");
+    
+    // 销毁旧实例（防止重复初始化）
+    if (peer) {
+        peer.destroy();
+    }
+
+    peer = new Peer(null, peerConfig);
 
     peer.on('open', (id) => {
-        console.log('我的网络 ID:', id);
+        console.log('✅ 我的网络 ID:', id);
         updateNetworkStatus("已连接到网络服务器，等待房间...");
+        // 启用输入框
+        const input = document.querySelector('#room-id-input');
+        const btn = document.querySelector('#lobby-controls button');
+        if(input) input.disabled = false;
+        if(btn) btn.disabled = false;
     });
 
+    // ✅ 修复点：这里加上了花括号 {}
     peer.on('error', (err) => {
-        console.error('网络错误:', err);
-        updateNetworkStatus("网络连接失败: " + err.type);
-        alert("联机服务暂时不可用，请刷新页面重试。");
+        console.error('❌ 网络错误:', err);
+        let msg = "网络连接失败";
+        
+        if (err.type === 'unavailable-id') msg = "房间号被占用，请换一个";
+        else if (err.type === 'invalid-id') msg = "无效的房间号";
+        else if (err.type === 'network') msg = "网络不通，请检查防火墙或切换 WiFi/4G";
+        else if (err.type === 'peer-unavailable') msg = "对方不在线";
+        else if (err.type === 'ssl-unavailable') msg = "SSL 连接失败，请刷新页面";
+        
+        updateNetworkStatus(msg);
+        alert("联机服务提示：" + msg + "\n\n建议：\n1. 刷新页面重试\n2. 检查是否开启了广告拦截插件\n3. 尝试切换手机 WiFi/4G");
+        
+        // 5秒后尝试自动重连
+        setTimeout(() => {
+            if(peer && peer.disconnected) {
+                console.log("尝试重连...");
+                peer.reconnect();
+            }
+        }, 5000);
     });
 
-    // 监听他人连接我 (作为主机时)
+    // 监听他人连接我
     peer.on('connection', (c) => {
         if (conn && conn.open) {
-            c.close(); // 只允许一个玩家
+            c.close(); 
             return;
         }
+        console.log("🤝 收到连接请求");
         conn = c;
         setupConnection();
-        // 主机默认为红方
         myRole = 'red'; 
         startMultiplayerGame('red');
     });
