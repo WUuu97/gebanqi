@@ -41,7 +41,6 @@ let lobbyControls = null;
 window.onload = function() {
     console.log("🚀 游戏正在启动...");
     
-    // 获取 DOM 元素
     boardElement = document.getElementById('board');
     statusText = document.getElementById('status-text');
     modeDisplay = document.getElementById('mode-display');
@@ -60,22 +59,19 @@ window.onload = function() {
         return;
     }
     
-    // 【修复】先绑定棋盘事件，再初始化游戏
     bindBoardEvents();
     initGame();
     setTimeout(initNetwork, 500);
 };
 
-// ================= 事件绑定（独立函数）=================
+// ================= 事件绑定 =================
 function bindBoardEvents() {
     if (!boardElement) return;
     
-    // 移除旧事件（避免重复）
     const newBoard = boardElement.cloneNode(false);
     boardElement.parentNode.replaceChild(newBoard, boardElement);
     boardElement = document.getElementById('board');
     
-    // 绑定鼠标移动事件
     boardElement.addEventListener('mousemove', handleGlobalMouseMove);
     boardElement.addEventListener('mouseleave', function() {
         if (hoverWall) clearHoverPreview();
@@ -97,7 +93,6 @@ function initGame() {
     hoverWall = null;
     lastMousePos = { x: -9999, y: -9999 };
 
-    // 初始化棋盘状态
     for (let r = 0; r < BOARD_SIZE; r++) {
         let row = [];
         for (let c = 0; c < BOARD_SIZE; c++) {
@@ -106,11 +101,9 @@ function initGame() {
         boardState.push(row);
     }
 
-    // 【修复】不清空 boardElement，直接渲染
     renderBoard();
     updateStatus();
     
-    // 【修复】确保棋盘可点击
     if (boardElement) {
         boardElement.style.pointerEvents = 'auto';
     }
@@ -130,8 +123,6 @@ function renderBoard() {
             cell.className = 'cell';
             cell.dataset.r = r;
             cell.dataset.c = c;
-            
-            // 【修复】确保 cell 可点击
             cell.style.pointerEvents = 'auto';
             cell.style.cursor = 'pointer';
 
@@ -147,7 +138,6 @@ function renderBoard() {
                 }
             }
 
-            // 【修复】使用闭包保存 r, c 值
             (function(row, col) {
                 cell.addEventListener('click', function(e) {
                     e.stopPropagation();
@@ -160,7 +150,6 @@ function renderBoard() {
         }
     }
 
-    // 渲染隔板
     for (let i = 0; i < walls.length; i++) {
         let w = walls[i];
         createWallDOM(w.r, w.c, w.type, false);
@@ -170,7 +159,7 @@ function renderBoard() {
         createWallDOM(hoverWall.r, hoverWall.c, hoverWall.type, true);
     }
     
-    console.log("✅ 棋盘渲染完成，格子数:", BOARD_SIZE * BOARD_SIZE);
+    console.log("✅ 棋盘渲染完成，格子数:", BOARD_SIZE * BOARD_SIZE, "隔板数:", walls.length);
 }
 
 function createWallDOM(r, c, type, isPreview) {
@@ -224,13 +213,11 @@ function handleCellClick(r, c) {
     
     const cell = boardState[r][c];
 
-    // 联机等待对手时禁用点击
     if (isMultiplayer && gameState === 'WAITING_OPPONENT') {
         console.log("⏸️ 等待对手，忽略点击");
         return;
     }
 
-    // 放置红棋
     if (gameState === 'PLACE_RED') {
         if (!cell.hasPiece) {
             boardState[r][c].hasPiece = 'red';
@@ -246,7 +233,6 @@ function handleCellClick(r, c) {
         return;
     }
 
-    // 放置蓝棋
     if (gameState === 'PLACE_BLUE') {
         if (!cell.hasPiece) {
             boardState[r][c].hasPiece = 'blue';
@@ -262,20 +248,16 @@ function handleCellClick(r, c) {
         return;
     }
 
-    // 选择棋子
     if (gameState === 'MOVE_SELECT') {
         if (cell.hasPiece === currentPlayer) {
             selectedPiecePos = { r: r, c: c };
             gameState = 'MOVE_TARGET';
             renderBoard();
             updateStatus();
-        } else if (cell.hasPiece) {
-            console.log("⚠️ 点击了对方棋子");
         }
         return;
     }
 
-    // 移动棋子
     if (gameState === 'MOVE_TARGET') {
         if (!selectedPiecePos) {
             console.log("⚠️ 没有选中的棋子");
@@ -295,13 +277,9 @@ function handleCellClick(r, c) {
             updateStatus();
             forceDetectAfterMove();
             if (isMultiplayer) sendMove(moveData);
-        } else {
-            console.log("⚠️ 无效的移动目标");
         }
         return;
     }
-    
-    console.log("⚠️ 未处理的 gameState:", gameState);
 }
 
 function finishSetupPhase() {
@@ -395,8 +373,9 @@ function clearHoverPreview() {
     }
 }
 
+// ================= 【关键修复】placeWall 函数 =================
 function placeWall(r, c, type) {
-    console.log("🧱 放置隔板:", r, c, type, "gameState:", gameState);
+    console.log("🧱 放置隔板:", r, c, type, "gameState:", gameState, "isMultiplayer:", isMultiplayer);
     
     if (gameState !== 'PLACE_RED_WALL' && gameState !== 'PLACE_BLUE_WALL' && gameState !== 'WALL_PLACE') {
         console.log("⚠️ 当前状态不允许放置隔板");
@@ -404,38 +383,57 @@ function placeWall(r, c, type) {
     }
 
     if (isValidWallPlacement(r, c, type)) {
+        // 【关键】先更新本地状态
         walls.push({ r: r, c: c, type: type });
         
-        if (isMultiplayer) {
-            sendMove({ type: 'PLACE_WALL', r: r, c: c, type: type });
-        }
-
+        // 【关键修复】确定下一步状态
+        let nextGameState = '';
+        let nextPlayer = currentPlayer;
+        
         if (gameState === 'PLACE_RED_WALL') {
-            gameState = 'PLACE_BLUE';
-            selectedPiecePos = null;
-            if (isMultiplayer) {
-                sendMove({ type: 'TURN_CHANGE', nextState: 'PLACE_BLUE' });
-            }
+            nextGameState = 'PLACE_BLUE';
+            nextPlayer = 'blue';
         } else if (gameState === 'PLACE_BLUE_WALL') {
-            gameState = 'MOVE_SELECT';
-            currentPlayer = 'red';
-            selectedPiecePos = null;
-            if (isMultiplayer) {
-                sendMove({ type: 'TURN_CHANGE', nextState: 'MOVE_SELECT' });
-            }
+            nextGameState = 'MOVE_SELECT';
+            nextPlayer = 'red';
         } else if (gameState === 'WALL_PLACE') {
             if (checkWin()) {
-                if (isMultiplayer) sendMove({ type: 'GAME_OVER', msg: "游戏结束" });
+                if (isMultiplayer) {
+                    // 【关键】先发送游戏结束消息
+                    sendMove({ 
+                        type: 'GAME_OVER', 
+                        msg: (currentPlayer === 'red' ? '红方' : '蓝方') + '获胜' 
+                    });
+                }
+                showWinMessage((currentPlayer === 'red' ? '红方' : '蓝方') + " 获胜", "游戏结束");
                 return;
             }
-            currentPlayer = (currentPlayer === 'red') ? 'blue' : 'red';
-            gameState = 'MOVE_SELECT';
-            selectedPiecePos = null;
+            nextGameState = 'MOVE_SELECT';
+            nextPlayer = (currentPlayer === 'red') ? 'blue' : 'red';
         }
-
+        
+        // 【关键修复】先发送数据，再更新本地状态
+        if (isMultiplayer) {
+            sendMove({ 
+                type: 'PLACE_WALL', 
+                r: r, 
+                c: c, 
+                type: type,
+                nextGameState: nextGameState,
+                nextPlayer: nextPlayer
+            });
+        }
+        
+        // 更新本地状态
+        gameState = nextGameState;
+        currentPlayer = nextPlayer;
+        selectedPiecePos = null;
         hoverWall = null;
+        
         renderBoard();
         updateStatus();
+        
+        console.log("✅ 隔板放置完成，新状态:", gameState, "当前玩家:", currentPlayer);
     } else {
         console.log("⚠️ 隔板位置无效");
     }
@@ -601,34 +599,12 @@ function checkWin() {
     currentPlayer = originalPlayer;
 
     if (validMoves.length === 0) {
-        const winnerText = (currentPlayer === 'red') ? '红方' : '蓝方';
-        showWinMessage(winnerText + " 获胜", "对方已无路可走！");
         return true;
     }
 
     const isConnect = checkConnectivity(redPos, bluePos);
 
     if (!isConnect) {
-        const redWallCount = countValidWallPlacements(redPos);
-        const blueWallCount = countValidWallPlacements(bluePos);
-        
-        let winnerText = "";
-        let reasonText = "双方已被完全隔断！\n\n";
-        reasonText += "🔴 红方可放置隔板数：" + redWallCount + "\n";
-        reasonText += "🔵 蓝方可放置隔板数：" + blueWallCount + "\n\n";
-
-        if (redWallCount > blueWallCount) {
-            winnerText = "红方 获胜";
-            reasonText += "结论：红方领地内可放置的隔板更多，获胜！";
-        } else if (blueWallCount > redWallCount) {
-            winnerText = "蓝方 获胜";
-            reasonText += "结论：蓝方领地内可放置的隔板更多，获胜！";
-        } else {
-            winnerText = "平局";
-            reasonText += "结论：双方可放置隔板数量相同，平局！";
-        }
-        
-        showWinMessage(winnerText, reasonText);
         return true;
     }
 
@@ -749,7 +725,7 @@ function findPiece(player) {
     return null;
 }
 
-// ================= 联机模块 =================
+// ================= 【关键修复】联机模块 =================
 
 function initNetwork() {
     console.log("🌐 正在尝试连接联机服务器...");
@@ -761,23 +737,10 @@ function initNetwork() {
         return;
     }
 
-    // 【关键修复】使用多个备用服务器，优先尝试国内可访问的
     const serverConfigs = [
-        {
-            host: 'peerjs-server.onrender.com',
-            port: 443,
-            secure: true
-        },
-        {
-            host: 'peerjs.minimalist.com',
-            port: 443,
-            secure: true
-        },
-        {
-            host: '0.peerjs.com',
-            port: 443,
-            secure: true
-        }
+        { host: 'peerjs-server.onrender.com', port: 443, secure: true },
+        { host: 'peerjs.minimalist.com', port: 443, secure: true },
+        { host: '0.peerjs.com', port: 443, secure: true }
     ];
 
     let currentServerIndex = 0;
@@ -789,8 +752,8 @@ function initNetwork() {
         }
 
         const config = serverConfigs[currentServerIndex];
-        console.log(`🔄 尝试服务器 ${currentServerIndex + 1}/${serverConfigs.length}: ${config.host}`);
-        updateNetworkStatus(`尝试连接服务器 ${currentServerIndex + 1}/${serverConfigs.length}...`);
+        console.log("🔄 尝试服务器 " + (currentServerIndex + 1) + "/" + serverConfigs.length + ": " + config.host);
+        updateNetworkStatus("尝试连接服务器 " + (currentServerIndex + 1) + "/" + serverConfigs.length + "...");
 
         const peerConfig = {
             debug: 0,
@@ -801,8 +764,7 @@ function initNetwork() {
                 'iceServers': [
                     { urls: 'stun:stun.l.google.com:19302' },
                     { urls: 'stun:stun1.l.google.com:19302' },
-                    { urls: 'stun:stun.services.mozilla.com' },
-                    { urls: 'stun:stun.stunprotocol.org' }
+                    { urls: 'stun:stun.services.mozilla.com' }
                 ]
             }
         };
@@ -816,7 +778,6 @@ function initNetwork() {
             return;
         }
 
-        // 延长超时时间到 15 秒
         connectionTimeout = setTimeout(function() {
             if (peer && !peer.id) {
                 console.warn("⏳ 连接超时，尝试下一个服务器");
@@ -868,20 +829,11 @@ function handleConnectionFailure(reason) {
     updateNetworkStatus("⚠️ 联机不可用 (单机模式)");
     enableLobbyControls(true);
     
-    if (connectionRetryCount < MAX_RETRY) {
-        connectionRetryCount++;
-        console.log("🔄 重试 (" + connectionRetryCount + "/" + MAX_RETRY + ")...");
-        setTimeout(function() {
-            if (peer) peer.destroy();
-            peer = null;
-            initNetwork();
-        }, 3000);
-    } else {
-        console.log("❌ 停止重试，转为离线模式");
-        if (networkStatusEl) {
-            networkStatusEl.innerText = "⚠️ 联机服务暂时不可用，可输入房间号尝试或玩单机模式";
-            networkStatusEl.style.color = "orange";
-        }
+    console.log("❌ 连接失败原因:", reason);
+    
+    if (networkStatusEl) {
+        networkStatusEl.innerText = "⚠️ 联机服务暂时不可用 (" + reason + ")，可玩单机模式";
+        networkStatusEl.style.color = "orange";
     }
 }
 
@@ -910,8 +862,9 @@ function setupConnectionHandlers() {
     });
 }
 
+// ================= 【关键修复】handleNetworkData 函数 =================
 function handleNetworkData(data) {
-    console.log("📡 处理网络数据:", data.type);
+    console.log("📡 处理网络数据:", data.type, data);
     
     switch (data.type) {
         case 'PIECE_PLACED':
@@ -931,20 +884,34 @@ function handleNetworkData(data) {
             boardState[data.from.r][data.from.c].hasPiece = null;
             const opponentColor = (myRole === 'red') ? 'blue' : 'red';
             boardState[data.to.r][data.to.c].hasPiece = opponentColor;
-            gameState = 'MOVE_SELECT';  // 【修复】改为 MOVE_SELECT
-            currentPlayer = myRole;
-            updateStatus();
+            selectedPiecePos = { r: data.to.r, c: data.to.c };
+            gameState = 'WALL_PLACE';
+            currentPlayer = opponentColor;
             renderBoard();
+            updateStatus();
+            forceDetectAfterMove();
             break;
             
         case 'PLACE_WALL':
+            // 【关键修复】完整同步隔板状态
             walls.push({ r: data.r, c: data.c, type: data.type });
-            gameState = 'MOVE_SELECT';
-            currentPlayer = myRole;
-            if (boardElement) boardElement.style.pointerEvents = 'auto';
+            
+            // 同步游戏状态
+            if (data.nextGameState) {
+                gameState = data.nextGameState;
+            }
+            if (data.nextPlayer) {
+                currentPlayer = data.nextPlayer;
+            }
+            
+            selectedPiecePos = null;
             hoverWall = null;
+            
+            // 【关键】重新渲染棋盘
             renderBoard();
             updateStatus();
+            
+            console.log("✅ 隔板同步完成，新状态:", gameState, "当前玩家:", currentPlayer);
             break;
             
         case 'TURN_CHANGE':
@@ -968,7 +935,7 @@ function createRoom() {
         
         updateNetworkStatus("正在尝试创建房间: " + roomId);
         peer = new Peer(roomId, { 
-            host: 'peerjs-server.herokuapp.com', 
+            host: 'peerjs-server.onrender.com', 
             port: 443, 
             secure: true 
         });
@@ -1002,7 +969,7 @@ function joinRoom() {
     
     if (!peer || !peer.id) {
         peer = new Peer(null, { 
-            host: 'peerjs-server.herokuapp.com', 
+            host: 'peerjs-server.onrender.com', 
             port: 443, 
             secure: true 
         });
@@ -1076,7 +1043,6 @@ function startMultiplayerGame(role) {
             statusText.innerText = "等待红方放置棋子...";
             statusText.style.color = "#999";
         }
-        // 【修复】蓝方等待时也不禁用点击，方便调试
         if (boardElement) boardElement.style.pointerEvents = 'auto';
     } else {
         gameState = 'PLACE_RED';
