@@ -1,0 +1,110 @@
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    background-color: #f0f2f5;
+    margin: 0;
+}
+
+#game-container {
+    text-align: center;
+    background: white;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+#board {
+    display: grid;
+    /* 8行8列，每个格子50px，间隙用于画隔板 */
+    grid-template-columns: repeat(8, 50px);
+    grid-template-rows: repeat(8, 50px);
+    gap: 2px; 
+    background-color: #333;
+    border: 5px solid #333;
+    margin: 20px auto;
+    position: relative;
+    width: fit-content;
+}
+
+.cell {
+    width: 50px;
+    height: 50px;
+    background-color: #fff;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 24px;
+    cursor: pointer;
+    position: relative;
+}
+
+.cell:hover {
+    background-color: #e6f7ff;
+}
+
+/* 棋子样式 */
+.piece {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    z-index: 2;
+}
+
+.piece.red {
+    background-color: #ff4d4f;
+    border: 2px solid #cf1322;
+}
+
+.piece.blue {
+    background-color: #1890ff;
+    border: 2px solid #096dd9;
+}
+
+/* 隔板容器层 (覆盖在格子上方) */
+#wall-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none; /* 默认不拦截鼠标，由JS动态控制 */
+}
+
+.wall {
+    position: absolute;
+    background-color: #faad14;
+    z-index: 1;
+    pointer-events: auto; /* 隔板需要能点击或阻挡 */
+    cursor: pointer;
+}
+
+/* 横向隔板 */
+.wall.horizontal {
+    height: 6px;
+    width: 52px; /* 跨越两个格子间隙 */
+    border-radius: 3px;
+}
+
+/* 纵向隔板 */
+.wall.vertical {
+    width: 6px;
+    height: 52px;
+    border-radius: 3px;
+}
+
+.highlight {
+    background-color: #b7eb8f !important; /* 移动可选位置高亮 */
+}
+
+.wall-preview {
+    background-color: rgba(250, 173, 20, 0.5) !important;
+}
+
+#mode-display {
+    font-weight: bold;
+    color: #1890ff;
+}
