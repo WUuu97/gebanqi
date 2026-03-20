@@ -22,6 +22,8 @@ let conn = null;
 let myRole = null;
 let isMultiplayer = false;
 let connectionTimeout = null;
+let connectionRetryCount = 0;  // 【新增】
+const MAX_RETRY = 3;  // 【新增】
 
 // ================= DOM 元素 =================
 let boardElement, statusText, modeDisplay, networkStatusEl;
@@ -593,14 +595,16 @@ function findPiece(player) {
     return null;
 }
 
-// ================= 联机模块 (修复版) =================
-
+// ================= 联机模块 =================
 function initNetwork() {
     console.log("🌐 正在尝试连接联机服务器...");
-    updateNetworkStatus("正在连接服务器 (最多等待 8 秒)...");
+    updateNetworkStatus("正在连接服务器 (最多等待 15 秒)...");
 
     const peerConfig = {
         debug: 2,
+        host: 'peerjs-server.herokuapp.com',  // 【修复】备用服务器
+        port: 443,
+        secure: true,
         config: {
             'iceServers': [
                 { urls: 'stun:stun.l.google.com:19302' },
@@ -618,17 +622,19 @@ function initNetwork() {
         return;
     }
 
+    // 【修复】延长超时到 15 秒
     connectionTimeout = setTimeout(() => {
         if (peer && !peer.id) {
             console.warn("⏳ 连接超时");
             handleConnectionFailure("连接超时：服务器响应太慢");
             if (peer) peer.destroy();
         }
-    }, 8000);
+    }, 15000);
 
     peer.on('open', (id) => {
         console.log('✅ 连接成功！我的 ID:', id);
         clearTimeout(connectionTimeout);
+        connectionRetryCount = 0;  // 【新增】重置重试计数
         updateNetworkStatus("✅ 网络已就绪 | 我的 ID: " + id);
         enableLobbyControls(true);
     });
@@ -636,13 +642,7 @@ function initNetwork() {
     peer.on('error', (err) => {
         console.error('❌ 网络错误:', err.type, err.message);
         clearTimeout(connectionTimeout);
-        
-        let msg = "网络连接失败";
-        if (err.type === 'network') msg = "网络不通 (防火墙/代理)";
-        if (err.type === 'ssl-unavailable') msg = "SSL 连接失败";
-        if (err.type === 'server-error') msg = "服务器错误";
-        
-        handleConnectionFailure(msg);
+        handleConnectionFailure("网络错误：" + err.type);
     });
 
     peer.on('connection', (c) => {
@@ -650,12 +650,37 @@ function initNetwork() {
             c.close();
             return;
         }
-        console.log("🤝 收到玩家连接请求");
         conn = c;
         setupConnectionHandlers();
         myRole = 'red';
         startMultiplayerGame('red');
     });
+}
+
+function handleConnectionFailure(reason) {
+    updateNetworkStatus("❌ 联机失败：" + reason);
+    enableLobbyControls(false);
+
+    // 【新增】自动重试
+    if (connectionRetryCount < MAX_RETRY) {
+        connectionRetryCount++;
+        console.log(`🔄 尝试重连 (${connectionRetryCount}/${MAX_RETRY})...`);
+        updateNetworkStatus(`连接失败，${MAX_RETRY - connectionRetryCount}秒后自动重试...`);
+        
+        setTimeout(() => {
+            if (peer) peer.destroy();
+            peer = null;
+            initNetwork();
+        }, 5000);
+        return;
+    }
+
+    alert("联机服务暂时不可用 (" + reason + ")。\n已尝试" + MAX_RETRY + "次连接。\n\n建议:\n1. 刷新页面重试\n2. 切换 WiFi/4G\n3. 先体验单机模式");
+    
+    if (boardElement) {
+        renderBoard();
+        updateStatus();
+    }
 }
 
 function handleConnectionFailure(reason) {
