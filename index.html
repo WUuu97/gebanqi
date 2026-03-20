@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>双人隔板棋</title>
     <link rel="stylesheet" href="style.css">
-    <!-- 【修复】PeerJS 库必须放在 head 内 -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 </head>
 <body>
@@ -14,34 +13,25 @@
         <div id="multiplayer-panel" style="margin-top: 10px; padding: 10px; border: 1px solid #ccc; border-radius: 5px; background: #f9f9f9;">
             <h3 style="margin: 0 0 10px 0; font-size: 16px;">🌐 多人联机 (免费)</h3>
             
-            <!-- 网络状态 -->
             <p id="network-status" style="font-size: 12px; color: #666; margin: 5px 0;">当前状态: 正在初始化...</p>
             
-            <!-- 大厅控制 -->
             <div id="lobby-controls">
                 <input type="text" id="room-id-input" placeholder="房间号" style="padding: 5px; width: 150px;" disabled>
-                <!-- 【修复】分开的两个按钮 -->
                 <button id="create-room-btn" onclick="createRoom()" style="padding: 5px 10px; cursor: pointer;" disabled>创建房间</button>
                 <button id="join-room-btn" onclick="joinRoom()" style="padding: 5px 10px; cursor: pointer;" disabled>加入房间</button>
             </div>
             
-            <!-- 游戏控制 -->
             <div id="game-controls" style="display: none;">
                 <span id="my-role" style="font-weight: bold; color: blue;"></span>
                 <button onclick="leaveRoom()" style="padding: 5px 10px; cursor: pointer; background: #ff4d4f; color: white; border: none; border-radius: 3px;">退出房间</button>
             </div>
             
-            <!-- 【修复】添加房间号显示区 -->
             <div id="room-display" style="margin-top: 10px; font-size: 14px; color: #1890ff; font-weight: bold;"></div>
         </div>
         
-        <!-- 游戏状态 -->
         <h1 id="status-text">红方回合：请选择棋子落点</h1>
-        
-        <!-- 棋盘 -->
         <div id="board"></div>
         
-        <!-- 控制区 -->
         <div id="controls">
             <p>当前模式：<span id="mode-display">等待开始</span></p>
             <button id="restart-btn" onclick="initGame()">重新开始</button>
