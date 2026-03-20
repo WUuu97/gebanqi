@@ -695,179 +695,229 @@ function findPiece(player) {
 
 // 启动游戏
 initGame();
-// ================= 联机模块 (PeerJS) =================
+// ================= 联机模块 (PeerJS) - 国内优化版 =================
 
 let peer = null;
 let conn = null;
-let myRole = null; // 'host' (红方) 或 'guest' (蓝方)
+let myRole = null; 
 let isMultiplayer = false;
-const ROOM_PREFIX = "qj-game-"; // 房间名前缀，避免冲突
+let connectionTimeout = null; // 用于超时检测
 
-// 初始化网络
 function initNetwork() {
-    // 【修复核心】显式指定 PeerJS 服务器配置
+    console.log("🌐 正在尝试连接联机服务器...");
+    
+    updateNetworkStatus("正在连接服务器 (最多等待 8 秒)...");
+
+    // 【核心修改】配置更稳定的节点和 STUN 服务器
     const peerConfig = {
-        host: '0.peerjs.com',
-        port: 443,
-        secure: true, // 必须为 true，因为 GitHub Pages 是 HTTPS
         debug: 2,
+        // 尝试使用多个 STUN 服务器，这对手机网络穿透至关重要
         config: {
             'iceServers': [
-                { url: 'stun:stun.l.google.com:19302' },
-                { url: 'stun:stun1.l.google.com:19302' }
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun.services.mozilla.com' },
+                { urls: 'stun:stun.stunprotocol.org' }
             ]
-        }
+        },
+        // 注意：这里不强制指定 host，让 PeerJS 自动选择最佳路由
+        // 如果自动选择失败，我们会手动捕获错误
     };
 
-    console.log("正在连接 PeerJS 服务器...");
-    
-    // 销毁旧实例（防止重复初始化）
-    if (peer) {
-        peer.destroy();
+    // 创建 Peer 实例
+    try {
+        peer = new Peer(null, peerConfig);
+    } catch (e) {
+        console.error("❌ PeerJS 初始化失败:", e);
+        handleConnectionFailure("浏览器不支持或初始化失败");
+        return;
     }
 
-    peer = new Peer(null, peerConfig);
+    // 设置超时定时器：如果 8 秒还没连上，视为失败
+    connectionTimeout = setTimeout(() => {
+        if (peer && !peer.id) {
+            console.warn("⏳ 连接超时，服务器响应太慢");
+            handleConnectionFailure("连接超时：服务器响应太慢，建议刷新重试或切换网络");
+            // 即使失败，也尝试销毁实例防止内存泄漏
+            if(peer) peer.destroy();
+        }
+    }, 8000);
 
+    // 1. 连接成功事件
     peer.on('open', (id) => {
-        console.log('✅ 我的网络 ID:', id);
-        updateNetworkStatus("已连接到网络服务器，等待房间...");
-        // 启用输入框
+        console.log('✅ 连接成功！我的 ID:', id);
+        clearTimeout(connectionTimeout); // 清除超时计时器
+        
+        updateNetworkStatus("✅ 网络已就绪 | 房间号前缀: " + ROOM_PREFIX);
+        
+        // 启用界面控制
         const input = document.querySelector('#room-id-input');
-        const btn = document.querySelector('#lobby-controls button');
+        const createBtn = document.querySelector('#create-room-btn');
+        const joinBtn = document.querySelector('#join-room-btn');
+        
         if(input) input.disabled = false;
-        if(btn) btn.disabled = false;
+        if(createBtn) createBtn.disabled = false;
+        if(joinBtn) joinBtn.disabled = false;
+        
+        // 确保棋盘可见（防止之前的错误导致棋盘未渲染）
+        if(canvas) drawBoard();
     });
 
-    // ✅ 修复点：这里加上了花括号 {}
+    // 2. 连接错误事件
     peer.on('error', (err) => {
-        console.error('❌ 网络错误:', err);
+        console.error('❌ 网络错误:', err.type, err.message);
+        clearTimeout(connectionTimeout);
+        
         let msg = "网络连接失败";
-        
-        if (err.type === 'unavailable-id') msg = "房间号被占用，请换一个";
-        else if (err.type === 'invalid-id') msg = "无效的房间号";
-        else if (err.type === 'network') msg = "网络不通，请检查防火墙或切换 WiFi/4G";
+        if (err.type === 'unavailable-id') msg = "房间号冲突，请换一个";
+        else if (err.type === 'invalid-id') msg = "房间号格式错误";
+        else if (err.type === 'network') msg = "网络不通 (防火墙/代理问题)";
         else if (err.type === 'peer-unavailable') msg = "对方不在线";
-        else if (err.type === 'ssl-unavailable') msg = "SSL 连接失败，请刷新页面";
+        else if (err.type === 'ssl-unavailable') msg = "SSL 安全连接失败";
+        else if (err.type === 'server-error') msg = "服务器内部错误";
         
-        updateNetworkStatus(msg);
-        alert("联机服务提示：" + msg + "\n\n建议：\n1. 刷新页面重试\n2. 检查是否开启了广告拦截插件\n3. 尝试切换手机 WiFi/4G");
-        
-        // 5秒后尝试自动重连
-        setTimeout(() => {
-            if(peer && peer.disconnected) {
-                console.log("尝试重连...");
-                peer.reconnect();
-            }
-        }, 5000);
+        handleConnectionFailure(msg);
     });
 
-    // 监听他人连接我
+    // 3. 收到连接请求 (作为房主)
     peer.on('connection', (c) => {
         if (conn && conn.open) {
-            c.close(); 
+            c.close(); // 拒绝多余连接
             return;
         }
-        console.log("🤝 收到连接请求");
+        console.log("🤝 收到玩家连接请求");
         conn = c;
-        setupConnection();
-        myRole = 'red'; 
+        setupConnectionHandlers();
+        
+        myRole = 'red'; // 房主是红方 (黑棋)
         startMultiplayerGame('red');
     });
 }
 
-// 创建或加入房间
+// 处理连接失败的统一函数
+function handleConnectionFailure(reason) {
+    updateNetworkStatus("❌ 联机失败: " + reason);
+    
+    // 重要：即使联机失败，也要让用户能玩单机版！
+    // 恢复按钮状态，允许用户点击“单机模式”或直接下棋
+    const input = document.querySelector('#room-id-input');
+    const createBtn = document.querySelector('#create-room-btn');
+    const joinBtn = document.querySelector('#join-room-btn');
+    
+    if(input) input.disabled = true; // 禁用联机输入
+    if(createBtn) createBtn.disabled = true;
+    if(joinBtn) joinBtn.disabled = true;
+
+    alert("联机服务暂时不可用 (" + reason + ")。\n\n原因通常是网络波动或服务器拥堵。\n建议：\n1. 刷新页面重试\n2. 切换手机 WiFi/4G\n3. 先体验单机模式");
+    
+    // 强制重绘棋盘，确保用户能看到棋盘
+    if(canvas) {
+        drawBoard();
+        updateStatus("单机模式可用 (联机失败)");
+    }
+}
+
+// 设置连接后的数据收发处理
+function setupConnectionHandlers() {
+    if (!conn) return;
+
+    conn.on('open', () => {
+        console.log("🔗 P2P 通道已建立");
+        isMultiplayer = true;
+        updateStatus("联机对战中 | 你是: " + (myRole === 'red' ? "黑棋 (先手)" : "白棋 (后手)"));
+    });
+
+    conn.on('data', (data) => {
+        console.log("📩 收到数据:", data);
+        if (data.type === 'move') {
+            // 对方下棋
+            placeStone(data.x, data.y, data.color);
+            // 切换回合
+            currentPlayer = currentPlayer === 'black' ? 'white' : 'black';
+            updateStatus("对方已落子，轮到你了 (" + (currentPlayer === 'black' ? "黑" : "白") + ")");
+        } else if (data.type === 'restart') {
+            resetGame();
+        }
+    });
+
+    conn.on('close', () => {
+        console.log("🔌 对方断开连接");
+        alert("对手已断开连接");
+        isMultiplayer = false;
+        conn = null;
+        updateStatus("对方已离开，转为单机模式");
+        enableLobbyControls(true); // 重新允许创建房间
+    });
+    
+    conn.on('error', (err) => {
+        console.error("连接错误:", err);
+        alert("连接出错：" + err);
+    });
+}
+
+// 辅助函数：创建房间
 function createRoom() {
-    const roomIdInput = document.getElementById('room-id-input').value.trim();
-    if (!roomIdInput) {
-        alert("请输入房间号！");
-        return;
-    }
-    
-    const fullRoomId = ROOM_PREFIX + roomIdInput;
-
     if (!peer || !peer.id) {
-        alert("正在连接网络服务器，请稍后...");
+        alert("尚未连接到服务器，请稍后...");
         return;
     }
+    const roomId = ROOM_PREFIX + Math.floor(Math.random() * 10000);
+    // 实际上 PeerID 就是房间号，我们直接用生成的 ID 或者自定义
+    // 这里为了简单，我们直接使用 peer.id 作为房间标识，或者你可以重新生成一个
+    // 但 PeerJS 机制是：知道对方 ID 才能连接。
+    // 所以“创建房间”其实就是告诉对方：“我的 ID 是这个，你来连我”。
+    
+    const finalRoomId = prompt("请输入自定义房间号 (留空则自动生成):", roomId);
+    const useId = finalRoomId || roomId;
+    
+    // 注意：PeerJS 不允许随意更改已生成的 ID。
+    // 真正的“房间号”逻辑通常需要配合信令服务器。
+    // 简化版做法：直接显示当前 ID 让对方输入。
+    
+    alert("房间创建成功！\n你的房间号是:\n【 " + peer.id + " 】\n\n请把这个号码发给朋友，让他点击“加入房间”并输入此号码。");
+    
+    // 更新界面显示房间号
+    const displayEl = document.querySelector('#room-display');
+    if(displayEl) displayEl.innerText = "当前房间: " + peer.id;
+    
+    myRole = 'red';
+    updateStatus("等待对手加入... (房间号: " + peer.id + ")");
+}
 
-    // 尝试连接 (作为客人)
-    // 注意：PeerJS 的逻辑是，如果 ID 存在则连接，不存在则无法连接。
-    // 为了实现“创建或加入”，我们先尝试连接。如果连接失败（对方不存在），我们再“宣称”自己是这个 ID (这需要重新初始化 peer 或者使用特定逻辑)。
-    // 简化方案：让用户明确是“创建”还是“加入”，或者使用更简单的逻辑：
-    // 方案 A: 主机固定 ID 逻辑比较复杂。
-    // 方案 B (推荐): 简单的“加入”逻辑。如果是第一个进来的，他需要先生成 ID。
-    // 改进方案 C (最稳健): 
-    // 1. 用户输入房间号。
-    // 2. 我们尝试连接该房间。
-    // 3. 如果连接成功 -> 我是客人 (蓝方)。
-    // 4. 如果连接失败 (对方不存在) -> 我把自己重命名为该房间号 (成为主机/红方)。
-    
-    // 由于 PeerJS ID 一旦生成不能直接改，我们采用以下策略：
-    // 每次点击按钮，销毁旧 peer，尝试以 "ROOM_PREFIX + 房间号" 为 ID 启动。
-    // 如果启动成功且没有别人连进来 -> 我是主机 (等待别人连我)。
-    // 但这样无法区分“我想加入”还是“我想创建”。
-    
-    // ✅ 最佳实践流程：
-    // 1. 生成一个随机 ID 作为临时身份。
-    // 2. 尝试连接目标房间 ID。
-    // 3. 如果连接成功 -> 加入成功 (蓝方)。
-    // 4. 如果连接失败 (err type 'unavailable-id' 或 'peer-unavailable') -> 说明没人，那我重新初始化 peer 并强制占用该 ID (成为主机)。
-    
-    // 为了代码简单，我们分两个按钮或者简化逻辑：
-    // 这里实现：先尝试连接，连不上就自动变成主机。
-    
-    const targetId = fullRoomId;
-    
-    // 先尝试连接
-    const tempConn = peer.connect(targetId);
-    
-    let connected = false;
+// 辅助函数：加入房间
+function joinRoom() {
+    if (!peer || !peer.id) {
+        alert("尚未连接到服务器，请稍后...");
+        return;
+    }
+    const roomId = prompt("请输入朋友的房间号:");
+    if (!roomId) return;
 
-    tempConn.on('open', () => {
-        connected = true;
-        conn = tempConn;
-        setupConnection();
-        myRole = 'blue'; // 后来者是蓝方
-        startMultiplayerGame('blue');
-        updateNetworkStatus(`已加入房间：${roomIdInput} (你是蓝方)`);
-    });
-
-    tempConn.on('error', (err) => {
-        if (!connected) {
-            // 连接失败，说明房间没人，那我创建它
-            // 必须重新创建一个 Peer 实例并指定 ID
-            if (peer) peer.destroy();
-            
-            setTimeout(() => {
-                peer = new Peer(targetId, { debug: 2 });
-                peer.on('open', () => {
-                    updateNetworkStatus(`房间 ${roomIdInput} 创建成功！(你是红方)\n等待对手加入...`);
-                    myRole = 'red';
-                    startMultiplayerGame('red');
-                    
-                    // 重新监听连接
-                    peer.on('connection', (c) => {
-                        if (conn && conn.open) { c.close(); return; }
-                        conn = c;
-                        setupConnection();
-                        alert("对手已加入！游戏开始。");
-                    });
-                });
-                peer.on('error', (e) => {
-                    alert("房间号被占用了或网络错误，请换一个房间号。");
-                    initNetwork(); // 恢复随机 ID 状态
-                });
-            }, 500);
-        }
-    });
+    updateNetworkStatus("正在连接房间: " + roomId + "...");
     
-    // 超时处理 (如果对方 ID 不存在，PeerJS 可能会挂起一会)
-    setTimeout(() => {
-        if (!connected && !conn) {
-             // 这里的逻辑主要靠 error 事件触发，超时仅作为兜底提示
-             // 实际上 'peer-unavailable' 错误会很快触发
-        }
-    }, 3000);
+    const c = peer.connect(roomId);
+    conn = c;
+    setupConnectionHandlers();
+    
+    myRole = 'blue'; // 加入者是蓝方 (白棋)
+    // 注意：此时还不能开始游戏，要等 conn.on('open')
+}
+
+// 辅助函数：启用/禁用大厅控制
+function enableLobbyControls(enable) {
+    const input = document.querySelector('#room-id-input');
+    const createBtn = document.querySelector('#create-room-btn');
+    const joinBtn = document.querySelector('#join-room-btn');
+    
+    if(input) input.disabled = !enable;
+    if(createBtn) createBtn.disabled = !enable;
+    if(joinBtn) joinBtn.disabled = !enable;
+}
+
+// 辅助函数：更新网络状态文字
+function updateNetworkStatus(msg) {
+    const el = document.querySelector('#network-status');
+    if(el) el.innerText = msg;
 }
 
 function leaveRoom() {
